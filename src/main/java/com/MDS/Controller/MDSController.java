@@ -152,7 +152,7 @@ public class MDSController {
 
 			return ResponseEntity.badRequest().build();
 		}
-		return new ResponseEntity<List<Location>>(locations, HttpStatus.OK);
+		return new ResponseEntity<String>(response, HttpStatus.OK);
 
 	}
 
