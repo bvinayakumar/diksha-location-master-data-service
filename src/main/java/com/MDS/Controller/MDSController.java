@@ -7,6 +7,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.UnsupportedEncodingException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -27,6 +28,7 @@ import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.impl.client.HttpClients;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.configurationprocessor.json.JSONObject;
 import org.springframework.core.env.Environment;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -41,7 +43,14 @@ import com.MDS.Model.School;
 import com.MDS.Utils.CSVUtils;
 import com.MDS.Utils.LocationHeaders;
 import com.MDS.Utils.StateHeaders;
+import com.google.gson.Gson;
+import com.google.gson.GsonBuilder;
+import com.google.gson.JsonArray;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 import com.opencsv.bean.CsvToBean;
+
+import org.apache.http.entity.StringEntity;
 //import com.csvreader.CsvReader;
 import org.apache.http.entity.mime.MultipartEntityBuilder;
 
@@ -52,7 +61,7 @@ public class MDSController {
     private Environment environment;
 	@Autowired
 	StateHeaders stateHeaders;
-	final String uploadUrl = "https://dev.open-sunbird.org/api/data/v1/location/upload";
+	final String baseUrl = "https://dev.open-sunbird.org/api/data/v1";
 	final String APIKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJkMTc1MDIwNDdlODc0ODZjOTM0ZDQ1ODdlYTQ4MmM3MyJ9.7LWocwCn5rrCScFQYOne8_Op2EOo-xTCK5JCFarHKSs";
 	@PostMapping("/location/state/upload")
 	@ResponseBody
@@ -68,7 +77,7 @@ public class MDSController {
 				String[] stateLocationHeaders = { "state_name",
 						"udise_state_code" };
 				createCsvFile(file, stateLocationHeaders,type);
-				 response =executeMultiPartRequest(uploadUrl, type);
+				 response =executeRequestLocationBulkUpload(baseUrl, type);
 			} catch (IOException e) {
 				return new ResponseEntity<Error>(HttpStatus.INTERNAL_SERVER_ERROR);
 
@@ -95,7 +104,7 @@ public class MDSController {
 					String[] districtLocationHeaders = { 
 							"district_name","udise_district_code","udise_state_code" };
 					createCsvFile(file, districtLocationHeaders,type);
-					 response =executeMultiPartRequest(uploadUrl, type);
+					 response =executeRequestLocationBulkUpload(baseUrl, type);
 				} catch (IOException e) {
 					return new ResponseEntity<Error>(HttpStatus.INTERNAL_SERVER_ERROR);
 
@@ -120,7 +129,7 @@ public class MDSController {
 				String[] blockLocationHeaders = { 
 						"edu_block_name", "udise_edu_block_code","udise_dist_code","udise_state_code"};
 				createCsvFile(file, blockLocationHeaders,type);
-				 response =executeMultiPartRequest(uploadUrl, type);
+				 response =executeRequestLocationBulkUpload(baseUrl, type);
 			} catch (IOException e) {
 				return new ResponseEntity<Error>(HttpStatus.INTERNAL_SERVER_ERROR);
 
@@ -143,7 +152,7 @@ public class MDSController {
 			try {
 				String[] blockLocationHeaders = {"cluname","clucd","inityear"};
 				createCsvFile(file, blockLocationHeaders,type);
-				 response =executeMultiPartRequest(uploadUrl, type);
+				 response =executeRequestLocationBulkUpload(baseUrl, type);
 			} catch (IOException e) {
 				return new ResponseEntity<Error>(HttpStatus.INTERNAL_SERVER_ERROR);
 
@@ -163,8 +172,9 @@ public class MDSController {
 		final String type = "school";
 		if (!file.isEmpty()) {
 			try {
-				schools = createMasterDataSchool(type, file);
-
+				String [] schoolHeaders = {"schcd","schname","blkcd","distcd"};
+				//schools = createMasterDataSchool(type, file);
+				 createCsvFile(file, schoolHeaders, type);
 			} catch (IOException e) {
 				return new ResponseEntity<Error>(HttpStatus.INTERNAL_SERVER_ERROR);
 
@@ -182,6 +192,7 @@ public class MDSController {
 		InputStream inputStream = file.getInputStream();
 		BufferedReader br = new BufferedReader(new InputStreamReader(inputStream));
 		CsvToBean<School> reader = new CsvToBean<School>();
+		
 		String line = br.readLine();
 		// Reading header, Ignoring
 		while ((line = br.readLine()) != null && !line.isEmpty()) {
@@ -240,13 +251,14 @@ public class MDSController {
 	/**
 	 * Method that builds the multi-part form data request
 	 * 
-	 * @param urlString
+	 * @param baseURL
 	 *            the urlString to which the file needs to be uploaded
 	 * @return server response as <code>String</code>
 	 */
-	public String executeMultiPartRequest(String urlString, String type) throws ClientProtocolException, IOException,HTTPException {
+	public String executeRequestLocationBulkUpload(String baseURL, String type) throws ClientProtocolException, IOException,HTTPException {
 		CloseableHttpClient httpClient = HttpClients.createDefault();
-		HttpPost uploadFile = new HttpPost(urlString);
+		String URL = baseURL +"/location/upload";
+		HttpPost uploadFile = new HttpPost(URL);
 		MultipartEntityBuilder builder = MultipartEntityBuilder.create();
 		// builder.ad
 
@@ -297,5 +309,80 @@ public class MDSController {
 		writer.close();
 		// locations = createMasterDataStoreLocation(type, file);
 
+	}
+	private  String getStateForBlock(String blockCode) throws Exception {
+
+		String districtId = getDistrictId(blockCode);
+		
+		String stateID = getStateId(districtId);
+		
+		String stateName = getStateName(stateID);
+		
+		return stateName;
+	
+	}
+	private  String getDistrictId(String blockCode) throws Exception {
+
+		JsonArray locationSearchResponse = null;
+		String districtId = null;
+		JsonObject requestfilters = new JsonObject();
+		requestfilters.addProperty("code", blockCode);
+		locationSearchResponse = callLocationSearchAPI(baseUrl, requestfilters);
+		System.out.println("getDistrictId body:::" + locationSearchResponse);
+		districtId = locationSearchResponse.get(0).getAsJsonObject().get("parentId").getAsString();
+		
+		return districtId;
+
+	}
+
+	private  String getStateId(String districtId) throws Exception {
+
+		JsonArray locationSearchResponse = null;
+		String stateId = null;
+		JsonObject requestfilters = new JsonObject();
+		requestfilters.addProperty("id", districtId);
+		locationSearchResponse = callLocationSearchAPI(baseUrl, requestfilters);
+		System.out.println("getStateId body:::" + locationSearchResponse);
+		stateId = locationSearchResponse.get(0).getAsJsonObject().get("parentId").getAsString();
+		//requestfilters.addProperty("stateId:::", districtId);
+		return stateId;
+
+	}
+
+	private  String getStateName(String stateId) throws Exception {
+
+		JsonArray locationSearchResponse = null;
+		String stateName = null;
+		JsonObject requestfilters = new JsonObject();
+		requestfilters.addProperty("id", stateId);
+		locationSearchResponse = callLocationSearchAPI(baseUrl, requestfilters);
+		System.out.println("getStateName body:::" + locationSearchResponse);
+		stateName = locationSearchResponse.get(0).getAsJsonObject().get("name").toString();
+		requestfilters.addProperty("stateName:::", stateId);
+		return stateName;
+
+	}
+
+	private  JsonArray callLocationSearchAPI(String baseURL, JsonObject requestfilters) throws Exception {
+		CloseableHttpClient httpClient = HttpClients.createDefault();
+		JsonObject locationSearchReqBody = new JsonObject();
+		JsonObject locationSearchReqst = new JsonObject();
+		locationSearchReqst.add("filters", requestfilters);
+		locationSearchReqBody.add("request", locationSearchReqst);
+		System.out.println("request---" + locationSearchReqBody.getAsJsonObject().toString());
+		String URL = baseURL + "/location/search";
+		// CloseableHttpClient httpClient = HttpClients.createDefault();
+		HttpPost districtSearch = new HttpPost(URL);
+		districtSearch.addHeader("Authorization", "bearer " + APIKey);
+		districtSearch.addHeader("Content-Type", "Application/json");
+		districtSearch.setEntity(new StringEntity(locationSearchReqBody.getAsJsonObject().toString()));
+		HttpResponse response = httpClient.execute(districtSearch);
+		ResponseHandler<String> handler = new BasicResponseHandler();
+		String resString = handler.handleResponse(response);
+		Gson gson = new GsonBuilder().setPrettyPrinting().create();
+		JsonElement jelem = gson.fromJson(resString, JsonElement.class);
+		JsonObject jobj = jelem.getAsJsonObject();
+		JsonElement getres = ((JsonObject) jobj.get("result")).get("response");
+		return getres.getAsJsonArray();
 	}
 }
